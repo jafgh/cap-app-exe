@@ -3,7 +3,7 @@ name: Build Windows Desktop Application
 on:
   push:
     branches:
-      - zapoom  # سيتم تشغيل العمل عند الدفع إلى الفرع الرئيسي
+      - main  # سيتم تشغيل العمل عند الدفع إلى الفرع الرئيسي
 
 jobs:
   build:
