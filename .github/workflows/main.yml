@@ -1,9 +1,9 @@
-name: Build Windows Desktop Application
+name: Build Windows Desktop Application 
 
 on:
   push:
     branches:
-      - main  # سيتم تشغيل العمل عند الدفع إلى الفرع الرئيسي
+      - zapoom  # سيتم تشغيل العمل عند الدفع إلى الفرع الرئيسي
 
 jobs:
   build:
@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4  # استخدام أحدث إصدار
         with:
-          python-version: '3.x'  # تثبيت إصدار Python
+          python-version: '3.10'  # تثبيت إصدار Python
 
       - name: Install dependencies
         run: |
