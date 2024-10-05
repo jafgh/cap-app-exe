@@ -1,0 +1,38 @@
+name: Build Windows Desktop Application
+
+on:
+  push:
+    branches:
+      - main  # سيتم تشغيل العمل عند الدفع إلى الفرع الرئيسي
+
+jobs:
+  build:
+    runs-on: windows-latest  # بناء فقط على نظام Windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3  # استخدام أحدث إصدار
+
+      - name: Set up Python
+        uses: actions/setup-python@v4  # استخدام أحدث إصدار
+        with:
+          python-version: '3.x'  # تثبيت إصدار Python
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt  # تثبيت المتطلبات من requirements.txt
+
+      - name: Build executable with PyInstaller
+        run: |
+          pip install pyinstaller
+          pyinstaller --onefile --windowed main.py  # بناء الملف التنفيذي .exe
+
+      - name: List dist directory contents  # خطوة لفحص الملفات في مجلد dist
+        run: dir dist
+
+      - name: Upload Executable
+        uses: actions/upload-artifact@v3  # رفع الملف التنفيذي كـ Artifact
+        with:
+          name: Executable
+          path: dist/*.exe  # رفع الملف التنفيذي بصيغة .exe من مجلد dist
