@@ -29,6 +29,7 @@ jobs:
         pip install requests
         pip install tk
         pip install pyinstaller
+        pip install opencv-python
 
     - name: Verify dependencies
       run: |
