@@ -693,15 +693,15 @@ class CaptchaApp:
             self.update_notification(
                 f"{len(self.background_images)} background images uploaded and preprocessed successfully!", "green")
 
-    def solve_captcha_from_prediction(self, prediction):
-        num1, operation, num2 = prediction
-        if operation == "+":
-            return num1 + num2
-        elif operation == "-":
-            return num1 - num2
-        elif operation == "×":
-            return num1 * num2
-        return None
+def solve_captcha_from_prediction(self, prediction):
+    num1, operation, num2 = prediction
+    if operation == "+":
+        return abs(num1 + num2)
+    elif operation == "-":
+        return abs(num1 - num2)
+    elif operation == "×":
+        return abs(num1 * num2)
+    return None
 
     def update_notification(self, message, color, response_text=None):
         full_message = message
