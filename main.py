@@ -13,7 +13,7 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision import models
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta    import traceback
+from datetime import datetime, timedelta
 
 cpu_device = torch.device("cpu")
 
@@ -61,7 +61,6 @@ class TrainedModel:
 
         del tensor_image
         return num1_predicted.item(), predicted_operation, num2_predicted.item()
-
 
 
 class ExpandingCircle:
@@ -142,7 +141,6 @@ class CaptchaApp:
         self.time_label.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.create_widgets()
-
     def create_widgets(self):
         self.add_account_button = tk.Button(self.main_frame, text="Add Account", command=self.add_account)
         self.add_account_button.pack()
@@ -283,98 +281,56 @@ class CaptchaApp:
 
     def show_captcha(self, captcha_data, username, captcha_id):
         try:
-            # تدمير إطار الكابتشا القديم إذا كان موجودًا
             if self.captcha_frame:
                 self.captcha_frame.destroy()
-
-            # فك تشفير بيانات الكابتشا من Base64
             captcha_base64 = captcha_data.split(",")[1] if "," in captcha_data else captcha_data
             captcha_image_data = np.frombuffer(base64.b64decode(captcha_base64), dtype=np.uint8)
             captcha_image = cv2.imdecode(captcha_image_data, cv2.IMREAD_COLOR)
-
             if captcha_image is None:
                 print("Failed to decode captcha image from memory.")
                 return
-
-            # معالجة الصورة: إزالة الخلفية
             start_time = time.time()
             processed_image = self.process_captcha(captcha_image)
+            processed_image = cv2.resize(processed_image, (200, 114))
             elapsed_time_bg_removal = time.time() - start_time
-
-            # إجراء التنبؤ مباشرةً بعد معالجة الصورة
+            self.display_captcha_image(processed_image)
             start_time = time.time()
             predictions = self.trained_model.predict(processed_image)
             elapsed_time_prediction = time.time() - start_time
             ocr_output_text = f"{predictions[0]} {predictions[1]} {predictions[2]}"
             print(f"Predicted Operation: {ocr_output_text}")
-
-            # تحديث الإشعارات
-            self.update_notification(f"Captcha solved in {elapsed_time_prediction:.5f}s", "green")
+            self.update_notification(f"Captcha solved in {elapsed_time_prediction:.2f}s", "green")
             self.update_time_label(
-                f"Background removal: {elapsed_time_bg_removal:.5f}s, Prediction: {elapsed_time_prediction:.5f}s"
-            )
-
-            # عرض الكابتشا المعالجة في الواجهة
-            processed_image = cv2.resize(processed_image, (200, 114))
-            self.display_captcha_image(processed_image)
-
-            # استخراج حل الكابتشا من التنبؤات وإرساله
+                f"Background removal: {elapsed_time_bg_removal:.2f}s, Prediction: {elapsed_time_prediction:.2f}s")
             captcha_solution = self.solve_captcha_from_prediction(predictions)
             if captcha_solution is not None:
                 self.executor.submit(self.submit_captcha, username, captcha_id, captcha_solution)
 
-            # إيقاف الـ Spinner وإخفائه
             self.spinner.stop()
             self.spinner_canvas.pack_forget()
 
         except Exception as e:
-            # التعامل مع الأخطاء
-            self.update_notification(f"Failed to show captcha: {e}", "red")
+            self.update_notification(f"Failed to show captcha: {e}", "red", response.txt)
             self.spinner.stop()
             self.spinner_canvas.pack_forget()
 
     def process_captcha(self, captcha_image):
-        try:
-            start_time = time.time()  # بدء قياس الوقت
-
-            if not self.background_images:
-                print("No background images loaded.")
-                return captcha_image
-
-            # تقليل دقة CAPTCHA لمطابقة دقة الخلفيات المحسوبة مسبقًا
-            scale_factor = 0.25
-            captcha_resized = cv2.resize(captcha_image, (0, 0), fx=scale_factor, fy=scale_factor)
-            captcha_gray = cv2.cvtColor(captcha_resized, cv2.COLOR_BGR2GRAY)
-
-            best_background_index = None
-            min_diff = float("inf")
-
-            # مقارنة CAPTCHA مع التواقيع المحسوبة مسبقًا
-            for i, bg_signature in enumerate(self.processed_background_signatures):
-                diff = cv2.absdiff(captcha_gray, bg_signature)
-                score = np.sum(diff)
-                if score < min_diff:
-                    min_diff = score
-                    best_background_index = i
-
-            # إذا تم العثور على الخلفية الأنسب، نزيل الخلفية
-            if best_background_index is not None:
-                best_background = self.background_images[best_background_index]
-                best_background_resized = cv2.resize(best_background, (captcha_image.shape[1], captcha_image.shape[0]))
-                cleaned_image = self.remove_background_keep_original_colors(captcha_image, best_background_resized)
-            else:
-                print("No suitable background found.")
-                cleaned_image = captcha_image
-
-            end_time = time.time()  # نهاية قياس الوقت
-            elapsed_time_ms = (end_time - start_time) * 1000
-            print(f"Captcha processing completed in {elapsed_time_ms:.2f} ms")
-
+        if not self.background_images:
+            return captcha_image
+        best_background = None
+        min_diff = float("inf")
+        for background in self.background_images:
+            background = cv2.resize(background, (captcha_image.shape[1], captcha_image.shape[0]))
+            processed_image = self.remove_background_keep_original_colors(captcha_image, background)
+            gray_diff = cv2.cvtColor(processed_image, cv2.COLOR_BGR2GRAY)
+            score = np.sum(gray_diff)
+            if score < min_diff:
+                min_diff = score
+                best_background = background
+        if best_background is not None:
+            cleaned_image = self.remove_background_keep_original_colors(captcha_image, best_background)
             return cleaned_image
-
-        except Exception as e:
-            print("An error occurred during captcha processing:")
-            print(traceback.format_exc())  # تفاصيل الخطأ
+        else:
             return captcha_image
 
     def display_captcha_image(self, captcha_image):
@@ -387,60 +343,46 @@ class CaptchaApp:
         captcha_label.grid(row=0, column=0, padx=10, pady=10)
 
     def remove_background_keep_original_colors(self, captcha_image, background_image):
-        try:
-            # قياس الوقت
-            start_time = time.time()
+        # 1. تقليل الدقة لتسريع العملية
+        scale_factor = 0.5
+        captcha_image = cv2.resize(captcha_image, (0, 0), fx=scale_factor, fy=scale_factor)
+        background_image = cv2.resize(background_image, (0, 0), fx=scale_factor, fy=scale_factor)
 
-            # 1. تقليل الدقة لتسريع العملية
-            scale_factor = 0.25
-            captcha_image = cv2.resize(captcha_image, (0, 0), fx=scale_factor, fy=scale_factor)
-            background_image = cv2.resize(background_image, (0, 0), fx=scale_factor, fy=scale_factor)
+        # 2. إذا كان GPU مدعومًا، استخدم CUDA لإزالة الخلفية
+        if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+            captcha_image_gpu = cv2.cuda_GpuMat()
+            background_image_gpu = cv2.cuda_GpuMat()
 
-            # 2. إذا كان GPU مدعومًا، استخدم CUDA لإزالة الخلفية
-            if cv2.cuda.getCudaEnabledDeviceCount() > 0:
-                captcha_image_gpu = cv2.cuda_GpuMat()
-                background_image_gpu = cv2.cuda_GpuMat()
+            captcha_image_gpu.upload(captcha_image)
+            background_image_gpu.upload(background_image)
 
-                captcha_image_gpu.upload(captcha_image)
-                background_image_gpu.upload(background_image)
+            # حساب الفرق بين الصورتين باستخدام GPU
+            diff_gpu = cv2.cuda.absdiff(captcha_image_gpu, background_image_gpu)
+            diff = diff_gpu.download()
 
-                # حساب الفرق بين الصورتين باستخدام GPU
-                diff_gpu = cv2.cuda.absdiff(captcha_image_gpu, background_image_gpu)
-                diff = diff_gpu.download()
+            # تحويل الفرق إلى صورة رمادية
+            gray_gpu = cv2.cuda.cvtColor(diff_gpu, cv2.COLOR_BGR2GRAY)
+            gray = gray_gpu.download()
 
-                # تحويل الفرق إلى صورة رمادية
-                gray_gpu = cv2.cuda.cvtColor(diff_gpu, cv2.COLOR_BGR2GRAY)
-                gray = gray_gpu.download()
+            # تطبيق العتبة (threshold) على الصورة الرمادية
+            _, mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
 
-                # تطبيق العتبة (threshold) على الصورة الرمادية
-                _, mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+            # رفع القناع إلى GPU
+            mask_gpu = cv2.cuda_GpuMat()
+            mask_gpu.upload(mask)
 
-                # رفع القناع إلى GPU
-                mask_gpu = cv2.cuda_GpuMat()
-                mask_gpu.upload(mask)
-
-                # إزالة الخلفية مع الحفاظ على الألوان الأصلية باستخدام GPU
-                result_gpu = cv2.cuda.bitwise_and(captcha_image_gpu, captcha_image_gpu, mask=mask_gpu)
-                result = result_gpu.download()
-            else:
-                # إذا لم يكن GPU مدعومًا، نستخدم الطريقة العادية
-                diff = cv2.absdiff(captcha_image, background_image)
-                gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-                _, mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
-                result = cv2.bitwise_and(captcha_image, captcha_image, mask=mask)
-
-            # طباعة الوقت المستغرق
-            end_time = time.time()
-            elapsed_time_ms = (end_time - start_time) * 1000  # تحويل إلى ميلي ثانية
-            print(f"Background removal completed in {elapsed_time_ms:.2f} ms")
+            # إزالة الخلفية مع الحفاظ على الألوان الأصلية باستخدام GPU
+            result_gpu = cv2.cuda.bitwise_and(captcha_image_gpu, captcha_image_gpu, mask=mask_gpu)
+            result = result_gpu.download()
 
             return result
-
-        except Exception as e:
-            # طباعة الخطأ
-            print("An error occurred during background removal:")
-            print(traceback.format_exc())  # تفاصيل الخطأ
-            return None
+        else:
+            # إذا لم يكن GPU مدعومًا، نستخدم الطريقة العادية
+            diff = cv2.absdiff(captcha_image, background_image)
+            gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+            result = cv2.bitwise_and(captcha_image, captcha_image, mask=mask)
+            return result
 
     def submit_captcha(self, username, captcha_id, captcha_solution):
         session = self.accounts[username].get("session")
@@ -458,21 +400,21 @@ class CaptchaApp:
     @staticmethod
     def generate_user_agent():
         user_agent_list = [
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (Linux; Android 11; SM-G996B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.210 Mobile Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
-            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_2_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.114 Safari/537.36",
-            "Mozilla/5.0 (Linux; Android 10; Pixel 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.101 Mobile Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.64",
-            "Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.2 Safari/605.1.15",
-            "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0",
-            "Mozilla/5.0 (Linux; Android 9; SAMSUNG SM-A505FN) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.111 Mobile Safari/537.36",
-            "Mozilla/5.0 (Windows NT 6.1; Trident/7.0; rv:11.0) like Gecko",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Safari/605.1.15",
-            "Mozilla/5.0 (X11; FreeBSD amd64; rv:91.0) Gecko/20100101 Firefox/91.0"
-        ]
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 11; SM-G996B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.210 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_2_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.114 Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 10; Pixel 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.101 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.64",
+        "Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.2 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0",
+        "Mozilla/5.0 (Linux; Android 9; SAMSUNG SM-A505FN) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.111 Mobile Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.1; Trident/7.0; rv:11.0) like Gecko",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.2 Safari/605.1.15",
+        "Mozilla/5.0 (X11; FreeBSD amd64; rv:91.0) Gecko/20100101 Firefox/91.0"
+    ]
 
         return random.choice(user_agent_list)
 
@@ -632,7 +574,7 @@ class CaptchaApp:
         session = requests.Session()
         session.headers.update(headers)
         return session
-
+        
     def login(self, username, password, session, retry_count=3):
         login_url = "https://api.ecsc.gov.sy:8443/secure/auth/login"
         login_data = {"username": username, "password": password}
@@ -649,6 +591,7 @@ class CaptchaApp:
             except requests.RequestException as e:
                 self.update_notification(f"Request error: {e}", "red")
                 return False
+
 
     def press_cab1_twice(self):
         username = list(self.accounts.keys())[0]
@@ -677,27 +620,17 @@ class CaptchaApp:
             title="Select Background Images", filetypes=[("Image files", "*.jpg *.png *.jpeg")]
         )
         if background_paths:
-            self.background_images = []
-            self.processed_background_signatures = []  # قائمة للاحتفاظ بتواقيع الخلفيات
-            for path in background_paths:
-                background_image = cv2.imread(path)
-                if background_image is not None:
-                    self.background_images.append(background_image)
-                    # حساب التوقيع (الصورة الرمادية للخلفية) وحفظها لتسريع العمليات
-                    resized_bg = cv2.resize(background_image, (0, 0), fx=0.25, fy=0.25)
-                    gray_bg = cv2.cvtColor(resized_bg, cv2.COLOR_BGR2GRAY)
-                    self.processed_background_signatures.append(gray_bg)
-            self.update_notification(
-                f"{len(self.background_images)} background images uploaded and preprocessed successfully!", "green")
+            self.background_images = [cv2.imread(path) for path in background_paths]
+            self.update_notification(f"{len(self.background_images)} background images uploaded successfully!", "green")
 
     def solve_captcha_from_prediction(self, prediction):
         num1, operation, num2 = prediction
         if operation == "+":
-            return abs(num1 + num2)
+            return num1 + num2
         elif operation == "-":
             return abs(num1 - num2)
         elif operation == "×":
-            return abs(num1 * num2)
+            return num1 * num2
         return None
 
     def update_notification(self, message, color, response_text=None):
