@@ -13,7 +13,7 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision import models
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta    import traceback
 
 cpu_device = torch.device("cpu")
 
@@ -385,9 +385,6 @@ class CaptchaApp:
         captcha_label = tk.Label(self.captcha_frame, image=captcha_image_tk)
         captcha_label.image = captcha_image_tk
         captcha_label.grid(row=0, column=0, padx=10, pady=10)
-
-    import time
-    import traceback
 
     def remove_background_keep_original_colors(self, captcha_image, background_image):
         try:
