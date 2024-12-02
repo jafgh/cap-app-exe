@@ -6,4 +6,3 @@ pillow
 requests
 pyinstal
 tk
-traceback
