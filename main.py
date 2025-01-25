@@ -141,6 +141,7 @@ class CaptchaApp:
         self.time_label.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.create_widgets()
+
     def create_widgets(self):
         self.add_account_button = tk.Button(self.main_frame, text="Add Account", command=self.add_account)
         self.add_account_button.pack()
@@ -169,7 +170,7 @@ class CaptchaApp:
     def is_session_valid(self, session):
         try:
             test_url = "https://api.ecsc.gov.sy:8443/some_endpoint_to_check_session"
-            response = session.get(test_url)
+            response = session.get(test_url, verify=False)
             return response.status_code == 200
         except requests.RequestException:
             return False
@@ -249,7 +250,7 @@ class CaptchaApp:
         try:
             captcha_url = f"https://api.ecsc.gov.sy:8443/files/fs/captcha/{captcha_id}"
             while True:
-                response = session.get(captcha_url)
+                response = session.get(captcha_url, verify=False)
 
                 # عرض رد الخادم فقط مهما كان نوع الرد
                 self.update_notification(f"Server Response: {response.text}",
@@ -391,7 +392,7 @@ class CaptchaApp:
             return
         try:
             get_url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={captcha_id}&captcha={captcha_solution}"
-            response = session.get(get_url)
+            response = session.get(get_url, verify=False)
             self.update_notification(f"Server تم التثبيت بنجاح: {response.text}",
                                      "green" if response.status_code == 200 else "red")
         except Exception as e:
@@ -464,7 +465,7 @@ class CaptchaApp:
                 "Origin": "https://ecsc.gov.sy",
             }
 
-            response = session.post(url, json=payload, headers=headers)
+            response = session.post(url, json=payload, headers=headers, verify=False)
             if response.status_code == 200:
                 data = response.json()
                 process_ids = data.get("P_RESULT", [])
@@ -531,7 +532,7 @@ class CaptchaApp:
         try:
             captcha_url = f"https://api.ecsc.gov.sy:8443/files/fs/captcha/{captcha_id}"
             while True:
-                response = session.get(captcha_url)
+                response = session.get(captcha_url, verify=False)
 
                 self.update_notification(f"Server Response: {response.text}",
                                          "green" if response.status_code == 200 else "red")
@@ -575,13 +576,13 @@ class CaptchaApp:
         session = requests.Session()
         session.headers.update(headers)
         return session
-        
+
     def login(self, username, password, session, retry_count=3):
         login_url = "https://api.ecsc.gov.sy:8443/secure/auth/login"
         login_data = {"username": username, "password": password}
         for attempt in range(retry_count):
             try:
-                post_response = session.post(login_url, json=login_data)
+                post_response = session.post(login_url, json=login_data, verify=False)
                 if post_response.status_code == 200:
                     self.update_notification("Login successful.", "green", post_response.text)
                     return True
@@ -592,7 +593,6 @@ class CaptchaApp:
             except requests.RequestException as e:
                 self.update_notification(f"Request error: {e}", "red")
                 return False
-
 
     def press_cab1_twice(self):
         username = list(self.accounts.keys())[0]
@@ -606,7 +606,7 @@ class CaptchaApp:
         captcha_solution = "123"
         get_url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={captcha_id1}&captcha={captcha_solution}"
 
-        response = session.get(get_url)
+        response = session.get(get_url, verify=False)
         if response.status_code == 200:
             self.update_notification(f"Response 200 received after attempt {attempt}. Stopping.", "green")
         else:
