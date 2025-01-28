@@ -62,7 +62,6 @@ class TrainedModel:
         del tensor_image
         return num1_predicted.item(), predicted_operation, num2_predicted.item()
 
-
 class ExpandingCircle:
     def __init__(self, canvas, x, y, max_radius, color):
         self.canvas = canvas
