@@ -17,28 +17,27 @@ from datetime import datetime, timedelta
 
 cpu_device = torch.device("cpu")
 
-
 class TrainedModel:
     def __init__(self):
         start_time = time.time()
-        self.model = models.squeezenet1_0(weights=None)
-        self.model.classifier[1] = nn.Conv2d(512, 30, kernel_size=(1, 1), stride=(1, 1))
+        self.model = models.mobilenet_v2(pretrained=False)
+        self.model.classifier[1] = nn.Linear(self.model.last_channel, 30)
         model_path = "C:/Users/ccl/Desktop/trained_model.pth"
-        self.model.load_state_dict(torch.load(model_path, map_location=cpu_device, weights_only=True))
+        self.model.load_state_dict(torch.load(model_path, map_location=cpu_device))
         self.model = self.model.to(cpu_device)
         self.model.eval()
         print(f"Model loaded in {time.time() - start_time:.4f} seconds")
 
     def predict(self, img):
         start_time = time.time()
-        resized_image = cv2.resize(img, (160, 90))
+        resized_image = cv2.resize(img, (224, 224))  # تحديث الأبعاد لتتوافق مع MobileNet_v2
         print(f"Image resizing (OpenCV) took {time.time() - start_time:.4f} seconds")
 
         pil_image = Image.fromarray(cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB))
         preprocess = transforms.Compose([
             transforms.Grayscale(num_output_channels=3),
             transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5], [0.5]),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
         tensor_image = preprocess(pil_image).unsqueeze(0).to(cpu_device)
         print(f"Image preprocessing took {time.time() - start_time:.4f} seconds")
