@@ -19,14 +19,31 @@ from datetime import datetime, timedelta
 # تعريف الجهاز (في هذه الحالة جهاز CPU)
 cpu_device = torch.device("cpu")
 
+
+# تعريف معمارية MobileNetModel كما استخدمناها أثناء التدريب
+class MobileNetModel(nn.Module):
+    def __init__(self, num_classes=30):
+        super(MobileNetModel, self).__init__()
+        # استخدام MobileNetV2 المُدرّب مسبقاً كـ feature extractor
+        mobilenet = models.mobilenet_v2(pretrained=True)
+        self.features = mobilenet.features
+        # إضافة طبقة conv1x1 لتحويل عدد القنوات من 1280 إلى 30 (كما في التدريب)
+        self.conv_last = nn.Conv2d(1280, num_classes, kernel_size=1)
+        # طبقة adaptive average pooling للحصول على إخراج (batch, 30, 1, 1)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+    
+    def forward(self, x):
+        x = self.features(x)
+        x = self.conv_last(x)
+        x = self.avgpool(x)
+        return x
+
+# الفئة التي تحمل النموذج المدرب وتستخدمه في التنبؤ
 class TrainedModel:
     def __init__(self):
         start_time = time.time()
-        # استخدام نموذج MobileNet V2 (FB MobileNet) بدون أوزان مسبقة
-        self.model = models.mobilenet_v2(pretrained=False)
-        # تعديل طبقة المصنف لتخرج 30 قيمة كما تم أثناء التدريب
-        in_features = self.model.classifier[1].in_features
-        self.model.classifier[1] = nn.Linear(in_features, 30)
+        # استخدام معمارية MobileNetModel المعدلة سابقاً
+        self.model = MobileNetModel(num_classes=30)
         # تأكد من أن المسار يشير إلى ملف النموذج المدرب (FB MobileNet)
         model_path = "C:/Users/ccl/Desktop/fbmobilenet_trained.pth"
         # تحميل حالة النموذج المدرب على جهاز CPU
@@ -65,14 +82,14 @@ class TrainedModel:
         print(f"Model prediction took {time.time() - start_time:.4f} seconds")
 
         # تقسيم المخرجات إلى ثلاث مجموعات:
-        # - أول 10 لخانة الرقم الأول
-        # - 3 لخانة العملية
-        # - الباقي للرقم الثاني
+        # - أول 10 لقيم الرقم الأول
+        # - 3 لقيم رمز العملية
+        # - الباقي لقيم الرقم الثاني
         num1_preds = outputs[:, :10]
         operation_preds = outputs[:, 10:13]
         num2_preds = outputs[:, 13:]
 
-        # الحصول على التصنيف الأعلى لكل مجموعة
+        # الحصول على الفئة ذات أعلى احتمال في كل مجموعة
         _, num1_predicted = torch.max(num1_preds, 1)
         _, operation_predicted = torch.max(operation_preds, 1)
         _, num2_predicted = torch.max(num2_preds, 1)
