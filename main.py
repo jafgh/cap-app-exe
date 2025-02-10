@@ -15,48 +15,71 @@ from torchvision import models
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
+
+# تعريف الجهاز (في هذه الحالة جهاز CPU)
 cpu_device = torch.device("cpu")
 
 class TrainedModel:
     def __init__(self):
         start_time = time.time()
+        # استخدام نموذج MobileNet V2 (FB MobileNet) بدون أوزان مسبقة
         self.model = models.mobilenet_v2(pretrained=False)
-        self.model.classifier[1] = nn.Linear(self.model.last_channel, 30)
-        model_path = "C:/Users/ccl/Desktop/trained_model.pth"
+        # تعديل طبقة المصنف لتخرج 30 قيمة كما تم أثناء التدريب
+        in_features = self.model.classifier[1].in_features
+        self.model.classifier[1] = nn.Linear(in_features, 30)
+        # تأكد من أن المسار يشير إلى ملف النموذج المدرب (FB MobileNet)
+        model_path = "C:/Users/ccl/Desktop/fbmobilenet_trained.pth"
+        # تحميل حالة النموذج المدرب على جهاز CPU
         self.model.load_state_dict(torch.load(model_path, map_location=cpu_device))
         self.model = self.model.to(cpu_device)
         self.model.eval()
         print(f"Model loaded in {time.time() - start_time:.4f} seconds")
 
     def predict(self, img):
+        """
+        توقع العملية الحسابية من صورة مدخلة.
+        :param img: مصفوفة (numpy array) تمثل الصورة بنظام BGR (كما في OpenCV)
+        :return: tuple من (الرقم الأول, رمز العملية, الرقم الثاني)
+        """
         start_time = time.time()
-        resized_image = cv2.resize(img, (224, 224))  # تحديث الأبعاد لتتوافق مع MobileNet_v2
+        # تغيير حجم الصورة لتتوافق مع مدخلات النموذج (224x224)
+        resized_image = cv2.resize(img, (224, 224))
         print(f"Image resizing (OpenCV) took {time.time() - start_time:.4f} seconds")
 
+        # تحويل الصورة إلى PIL مع تصحيح ترتيب القنوات (BGR -> RGB)
         pil_image = Image.fromarray(cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB))
+        # إعداد التحويلات (preprocessing) كما استخدم أثناء التدريب
         preprocess = transforms.Compose([
             transforms.Grayscale(num_output_channels=3),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            transforms.Normalize([0.485, 0.456, 0.406],  # متوسط القنوات كما في ImageNet
+                                 [0.229, 0.224, 0.225]),
         ])
         tensor_image = preprocess(pil_image).unsqueeze(0).to(cpu_device)
         print(f"Image preprocessing took {time.time() - start_time:.4f} seconds")
 
         start_time = time.time()
         with torch.no_grad():
+            # توقع المخرجات وإعادة تشكيلها إلى (batch_size, 30)
             outputs = self.model(tensor_image).view(-1, 30)
         print(f"Model prediction took {time.time() - start_time:.4f} seconds")
 
+        # تقسيم المخرجات إلى ثلاث مجموعات:
+        # - أول 10 لخانة الرقم الأول
+        # - 3 لخانة العملية
+        # - الباقي للرقم الثاني
         num1_preds = outputs[:, :10]
         operation_preds = outputs[:, 10:13]
         num2_preds = outputs[:, 13:]
 
+        # الحصول على التصنيف الأعلى لكل مجموعة
         _, num1_predicted = torch.max(num1_preds, 1)
         _, operation_predicted = torch.max(operation_preds, 1)
         _, num2_predicted = torch.max(num2_preds, 1)
 
+        # خريطة العمليات لتحديد رمز العملية
         operation_map = {0: "+", 1: "-", 2: "×"}
-        predicted_operation = operation_map[operation_predicted.item()]
+        predicted_operation = operation_map.get(operation_predicted.item(), "?")
 
         del tensor_image
         return num1_predicted.item(), predicted_operation, num2_predicted.item()
@@ -343,7 +366,7 @@ class CaptchaApp:
 
     def remove_background_keep_original_colors(self, captcha_image, background_image):
         # 1. تقليل الدقة لتسريع العملية
-        scale_factor = 0.5
+        scale_factor = 0.25
         captcha_image = cv2.resize(captcha_image, (0, 0), fx=scale_factor, fy=scale_factor)
         background_image = cv2.resize(background_image, (0, 0), fx=scale_factor, fy=scale_factor)
 
@@ -614,13 +637,23 @@ class CaptchaApp:
                 self.request_captcha(username, captcha_id1, None)
                 self.check_server_response(username, captcha_id1, attempt=2)
 
-    def upload_backgrounds(self):
+   def upload_backgrounds(self):
         background_paths = filedialog.askopenfilenames(
             title="Select Background Images", filetypes=[("Image files", "*.jpg *.png *.jpeg")]
         )
         if background_paths:
-            self.background_images = [cv2.imread(path) for path in background_paths]
-            self.update_notification(f"{len(self.background_images)} background images uploaded successfully!", "green")
+            self.background_images = []
+            self.processed_background_signatures = []  # قائمة للاحتفاظ بتواقيع الخلفيات
+            for path in background_paths:
+                background_image = cv2.imread(path)
+                if background_image is not None:
+                    self.background_images.append(background_image)
+                    # حساب التوقيع (الصورة الرمادية للخلفية) وحفظها لتسريع العمليات
+                    resized_bg = cv2.resize(background_image, (0, 0), fx=0.25, fy=0.25)
+                    gray_bg = cv2.cvtColor(resized_bg, cv2.COLOR_BGR2GRAY)
+                    self.processed_background_signatures.append(gray_bg)
+            self.update_notification(
+                f"{len(self.background_images)} background images uploaded and preprocessed successfully!", "green")
 
     def solve_captcha_from_prediction(self, prediction):
         num1, operation, num2 = prediction
