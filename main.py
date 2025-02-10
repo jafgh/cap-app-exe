@@ -637,24 +637,14 @@ class CaptchaApp:
                 self.request_captcha(username, captcha_id1, None)
                 self.check_server_response(username, captcha_id1, attempt=2)
 
-   def upload_backgrounds(self):
+    def upload_backgrounds(self):
         background_paths = filedialog.askopenfilenames(
             title="Select Background Images", filetypes=[("Image files", "*.jpg *.png *.jpeg")]
         )
         if background_paths:
-            self.background_images = []
-            self.processed_background_signatures = []  # قائمة للاحتفاظ بتواقيع الخلفيات
-            for path in background_paths:
-                background_image = cv2.imread(path)
-                if background_image is not None:
-                    self.background_images.append(background_image)
-                    # حساب التوقيع (الصورة الرمادية للخلفية) وحفظها لتسريع العمليات
-                    resized_bg = cv2.resize(background_image, (0, 0), fx=0.25, fy=0.25)
-                    gray_bg = cv2.cvtColor(resized_bg, cv2.COLOR_BGR2GRAY)
-                    self.processed_background_signatures.append(gray_bg)
-            self.update_notification(
-                f"{len(self.background_images)} background images uploaded and preprocessed successfully!", "green")
-
+            self.background_images = [cv2.imread(path) for path in background_paths]
+            self.update_notification(f"{len(self.background_images)} background images uploaded successfully!", "green")
+            
     def solve_captcha_from_prediction(self, prediction):
         num1, operation, num2 = prediction
         if operation == "+":
