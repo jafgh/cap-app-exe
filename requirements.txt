@@ -6,4 +6,4 @@ pillow
 requests
 pyinstal
 tk
-onnx runtime
+onnxruntime
