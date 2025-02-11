@@ -25,7 +25,7 @@ class TrainedModel:
         self.model = MobileNetModel(num_classes=30).to(self.device)
 
         # تحميل الأوزان المدربة
-        model_path = "C:\Users/ccl/Desktop/mobilenet_trained.pth"  # تأكد من صحة المسار
+        model_path = "C:/Users/ccl/Desktop/mobilenet_trained.pth"  # تأكد من صحة المسار
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
 
