@@ -16,40 +16,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 
-# تعريف الجهاز (في هذه الحالة جهاز CPU)
-cpu_device = torch.device("cpu")
-
-
-# تعريف معمارية MobileNetModel كما استخدمناها أثناء التدريب
-class MobileNetModel(nn.Module):
-    def __init__(self, num_classes=30):
-        super(MobileNetModel, self).__init__()
-        # استخدام MobileNetV2 المُدرّب مسبقاً كـ feature extractor
-        mobilenet = models.mobilenet_v2(pretrained=True)
-        self.features = mobilenet.features
-        # إضافة طبقة conv1x1 لتحويل عدد القنوات من 1280 إلى 30 (كما في التدريب)
-        self.conv_last = nn.Conv2d(1280, num_classes, kernel_size=1)
-        # طبقة adaptive average pooling للحصول على إخراج (batch, 30, 1, 1)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-    
-    def forward(self, x):
-        x = self.features(x)
-        x = self.conv_last(x)
-        x = self.avgpool(x)
-        return x
-
-# الفئة التي تحمل النموذج المدرب وتستخدمه في التنبؤ
 class TrainedModel:
     def __init__(self):
         start_time = time.time()
-        # استخدام معمارية MobileNetModel المعدلة سابقاً
-        self.model = MobileNetModel(num_classes=30)
-        # تأكد من أن المسار يشير إلى ملف النموذج المدرب (FB MobileNet)
-        model_path = "C:/Users/ccl/Desktop/fbmobilenet_trained.pth"
-        # تحميل حالة النموذج المدرب على جهاز CPU
-        self.model.load_state_dict(torch.load(model_path, map_location=cpu_device))
-        self.model = self.model.to(cpu_device)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # إنشاء نموذج MobileNetV2 بنفس البنية المستخدمة أثناء التدريب
+        self.model = MobileNetModel(num_classes=30).to(self.device)
+
+        # تحميل الأوزان المدربة
+        model_path = "C:\Users/ccl/Desktop/mobilenet_trained.pth"  # تأكد من صحة المسار
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
+
         print(f"Model loaded in {time.time() - start_time:.4f} seconds")
 
     def predict(self, img):
@@ -59,46 +38,43 @@ class TrainedModel:
         :return: tuple من (الرقم الأول, رمز العملية, الرقم الثاني)
         """
         start_time = time.time()
-        # تغيير حجم الصورة لتتوافق مع مدخلات النموذج (224x224)
-        resized_image = cv2.resize(img, (224, 224))
-        print(f"Image resizing (OpenCV) took {time.time() - start_time:.4f} seconds")
 
-        # تحويل الصورة إلى PIL مع تصحيح ترتيب القنوات (BGR -> RGB)
+        # تغيير حجم الصورة لـ 224x224 لتناسب المدخلات
+        resized_image = cv2.resize(img, (224, 224))
+
+        # تحويل الصورة إلى PIL (BGR -> RGB)
         pil_image = Image.fromarray(cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB))
-        # إعداد التحويلات (preprocessing) كما استخدم أثناء التدريب
+
+        # تجهيز التحويلات كما تم استخدامها أثناء التدريب
         preprocess = transforms.Compose([
             transforms.Grayscale(num_output_channels=3),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],  # متوسط القنوات كما في ImageNet
-                                 [0.229, 0.224, 0.225]),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
-        tensor_image = preprocess(pil_image).unsqueeze(0).to(cpu_device)
+        tensor_image = preprocess(pil_image).unsqueeze(0).to(self.device)
+
         print(f"Image preprocessing took {time.time() - start_time:.4f} seconds")
 
-        start_time = time.time()
         with torch.no_grad():
-            # توقع المخرجات وإعادة تشكيلها إلى (batch_size, 30)
+            # تمرير الصورة عبر النموذج
             outputs = self.model(tensor_image).view(-1, 30)
+
         print(f"Model prediction took {time.time() - start_time:.4f} seconds")
 
-        # تقسيم المخرجات إلى ثلاث مجموعات:
-        # - أول 10 لقيم الرقم الأول
-        # - 3 لقيم رمز العملية
-        # - الباقي لقيم الرقم الثاني
+        # تقسيم المخرجات إلى (رقم1, العملية, رقم2)
         num1_preds = outputs[:, :10]
         operation_preds = outputs[:, 10:13]
         num2_preds = outputs[:, 13:]
 
-        # الحصول على الفئة ذات أعلى احتمال في كل مجموعة
+        # اختيار التوقع الأعلى لكل جزء
         _, num1_predicted = torch.max(num1_preds, 1)
         _, operation_predicted = torch.max(operation_preds, 1)
         _, num2_predicted = torch.max(num2_preds, 1)
 
-        # خريطة العمليات لتحديد رمز العملية
+        # خريطة العمليات الحسابية
         operation_map = {0: "+", 1: "-", 2: "×"}
         predicted_operation = operation_map.get(operation_predicted.item(), "?")
 
-        del tensor_image
         return num1_predicted.item(), predicted_operation, num2_predicted.item()
 
 class ExpandingCircle:
