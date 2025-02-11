@@ -31,7 +31,7 @@ jobs:
         pip install pyinstaller
         pip install opencv-python
         pip install onnxruntime
-
+        pip install onnx runtime
     - name: Verify dependencies
       run: |
         python -m pip check  # للتحقق من أن جميع المكتبات متوافقة
