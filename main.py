@@ -14,68 +14,76 @@ import torchvision.transforms as transforms
 from torchvision import models
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+import onnxruntime as ort
 
 
 class TrainedModel:
-    def __init__(self):
+    def __init__(self, model_path=r"C:\Users\ccl\Desktop\mobilenet_trained.onnx"):
         start_time = time.time()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # إنشاء جلسة ONNX Runtime لتحميل نموذج ONNX
+        self.session = ort.InferenceSession(model_path)
 
-        # إنشاء نموذج MobileNetV2 بنفس البنية المستخدمة أثناء التدريب
-        self.model = MobileNetModel(num_classes=30).to(self.device)
+        # إعداد تحويلات الصورة كما استخدمت أثناء التدريب
+        self.preprocess = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.Grayscale(num_output_channels=3),  # تحويل الصورة إلى 3 قنوات
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
 
-        # تحميل الأوزان المدربة
-        model_path = "C:/Users/ccl/Desktop/mobilenet_trained.pth"  # تأكد من صحة المسار
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-        self.model.eval()
-
-        print(f"Model loaded in {time.time() - start_time:.4f} seconds")
+        print(f"تم تحميل النموذج على CPU في {time.time() - start_time:.5f} ثانية")
 
     def predict(self, img):
         """
-        توقع العملية الحسابية من صورة مدخلة.
-        :param img: مصفوفة (numpy array) تمثل الصورة بنظام BGR (كما في OpenCV)
-        :return: tuple من (الرقم الأول, رمز العملية, الرقم الثاني)
+        دالة التنبؤ التي:
+          - تستقبل صورة (img) على شكل numpy array كما يخرجها OpenCV (BGR)
+          - تقوم بتحويلها إلى تنسيق PIL وتطبيق التحويلات اللازمة
+          - تمرر الصورة إلى نموذج ONNX للحصول على التنبؤات
+          - تعيد التنبؤ: الرقم الأول، العملية، والرقم الثاني
         """
         start_time = time.time()
 
-        # تغيير حجم الصورة لـ 224x224 لتناسب المدخلات
-        resized_image = cv2.resize(img, (224, 224))
+        # تحويل الصورة من BGR (OpenCV) إلى RGB وإنشاء كائن PIL
+        pil_image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
-        # تحويل الصورة إلى PIL (BGR -> RGB)
-        pil_image = Image.fromarray(cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB))
+        # تطبيق التحويلات على الصورة
+        input_tensor = self.preprocess(pil_image)
+        # إضافة بُعد الدُفعة وتحويلها إلى مصفوفة numpy (ONNX Runtime يعمل مع numpy)
+        input_np = input_tensor.unsqueeze(0).cpu().numpy()
 
-        # تجهيز التحويلات كما تم استخدامها أثناء التدريب
-        preprocess = transforms.Compose([
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
-        tensor_image = preprocess(pil_image).unsqueeze(0).to(self.device)
+        print(f"معالجة الصورة استغرقت {time.time() - start_time:.5f} ثانية")
+        start_inference = time.time()
 
-        print(f"Image preprocessing took {time.time() - start_time:.4f} seconds")
+        # تشغيل عملية التنبؤ باستخدام ONNX Runtime
+        # تأكد من أن اسم الإدخال مطابق للاسم المُستخدم أثناء التصدير (في هذه الحالة "input")
+        outputs = self.session.run(None, {"input": input_np})
+        # من المفترض أن تكون مخرجات النموذج على شكل (1, 30, 1, 1)؛ نقوم بتسويتها إلى (1, 30)
+        outputs = outputs[0].reshape(1, 30)
 
-        with torch.no_grad():
-            # تمرير الصورة عبر النموذج
-            outputs = self.model(tensor_image).view(-1, 30)
+        print(f"عملية التنبؤ استغرقت {time.time() - start_inference:.5f} ثانية")
 
-        print(f"Model prediction took {time.time() - start_time:.4f} seconds")
-
-        # تقسيم المخرجات إلى (رقم1, العملية, رقم2)
+        # تقسيم المخرجات إلى 3 مجموعات:
+        # - أول 10 قنوات للتنبؤ بالرقم الأول
+        # - القنوات من 10 إلى 12 للتنبؤ بالعملية
+        # - القنوات من 13 وما بعدها للتنبؤ بالرقم الثاني
         num1_preds = outputs[:, :10]
-        operation_preds = outputs[:, 10:13]
+        op_preds = outputs[:, 10:13]
         num2_preds = outputs[:, 13:]
 
-        # اختيار التوقع الأعلى لكل جزء
-        _, num1_predicted = torch.max(num1_preds, 1)
-        _, operation_predicted = torch.max(operation_preds, 1)
-        _, num2_predicted = torch.max(num2_preds, 1)
+        # الحصول على التصنيف لكل جزء
+        num1_predicted = np.argmax(num1_preds, axis=1)[0]
+        op_predicted = np.argmax(op_preds, axis=1)[0]
+        num2_predicted = np.argmax(num2_preds, axis=1)[0]
 
-        # خريطة العمليات الحسابية
+        # خريطة العمليات لتعيين الفئات إلى رموز العمليات
         operation_map = {0: "+", 1: "-", 2: "×"}
-        predicted_operation = operation_map.get(operation_predicted.item(), "?")
+        predicted_operation = operation_map.get(op_predicted, "?")
 
-        return num1_predicted.item(), predicted_operation, num2_predicted.item()
+        total_time = time.time() - start_time
+        print(f"إجمالي وقت التنبؤ: {total_time:.5f} ثانية")
+
+        return num1_predicted, predicted_operation, num2_predicted
 
 class ExpandingCircle:
     def __init__(self, canvas, x, y, max_radius, color):
@@ -314,9 +322,9 @@ class CaptchaApp:
             elapsed_time_prediction = time.time() - start_time
             ocr_output_text = f"{predictions[0]} {predictions[1]} {predictions[2]}"
             print(f"Predicted Operation: {ocr_output_text}")
-            self.update_notification(f"Captcha solved in {elapsed_time_prediction:.2f}s", "green")
+            self.update_notification(f"Captcha solved in {elapsed_time_prediction:.5f}s", "green")
             self.update_time_label(
-                f"Background removal: {elapsed_time_bg_removal:.2f}s, Prediction: {elapsed_time_prediction:.2f}s")
+                f"Background removal: {elapsed_time_bg_removal:.5f}s, Prediction: {elapsed_time_prediction:.5f}s")
             captcha_solution = self.solve_captcha_from_prediction(predictions)
             if captcha_solution is not None:
                 self.executor.submit(self.submit_captcha, username, captcha_id, captcha_solution)
@@ -359,7 +367,7 @@ class CaptchaApp:
 
     def remove_background_keep_original_colors(self, captcha_image, background_image):
         # 1. تقليل الدقة لتسريع العملية
-        scale_factor = 0.25
+        scale_factor = 0.4
         captcha_image = cv2.resize(captcha_image, (0, 0), fx=scale_factor, fy=scale_factor)
         background_image = cv2.resize(background_image, (0, 0), fx=scale_factor, fy=scale_factor)
 
@@ -444,7 +452,7 @@ class CaptchaApp:
 
             if self.login(username, password, session):
                 elapsed_time = time.time() - start_time
-                self.update_notification(f"Login successful for user {username}. Time: {elapsed_time:.2f}s", "green")
+                self.update_notification(f"Login successful for user {username}. Time: {elapsed_time:.5f}s", "green")
                 self.accounts[username] = {
                     "password": password,
                     "user_agent": user_agent,
@@ -635,9 +643,19 @@ class CaptchaApp:
             title="Select Background Images", filetypes=[("Image files", "*.jpg *.png *.jpeg")]
         )
         if background_paths:
-            self.background_images = [cv2.imread(path) for path in background_paths]
-            self.update_notification(f"{len(self.background_images)} background images uploaded successfully!", "green")
-            
+            self.background_images = []
+            self.processed_background_signatures = []  # قائمة للاحتفاظ بتواقيع الخلفيات
+            for path in background_paths:
+                background_image = cv2.imread(path)
+                if background_image is not None:
+                    self.background_images.append(background_image)
+                    # حساب التوقيع (الصورة الرمادية للخلفية) وحفظها لتسريع العمليات
+                    resized_bg = cv2.resize(background_image, (0, 0), fx=0.25, fy=0.25)
+                    gray_bg = cv2.cvtColor(resized_bg, cv2.COLOR_BGR2GRAY)
+                    self.processed_background_signatures.append(gray_bg)
+            self.update_notification(
+                f"{len(self.background_images)} background images uploaded and preprocessed successfully!", "green")
+
     def solve_captcha_from_prediction(self, prediction):
         num1, operation, num2 = prediction
         if operation == "+":
