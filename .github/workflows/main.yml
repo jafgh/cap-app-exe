@@ -30,6 +30,7 @@ jobs:
         pip install tk
         pip install pyinstaller
         pip install opencv-python
+        pip install onnxruntime
 
     - name: Verify dependencies
       run: |
