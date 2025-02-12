@@ -18,7 +18,7 @@ import onnxruntime as ort
 
 
 class TrainedModel:
-    def __init__(self, model_path=r"C:\Users\ccl\Desktop\mobilenet_trained.onnx"):
+    def __init__(self, model_path=r"C:\Users\ccl\Desktop\efficientnet_lite_trained.onnx"):
         start_time = time.time()
         # إنشاء جلسة ONNX Runtime لتحميل نموذج ONNX
         self.session = ort.InferenceSession(model_path)
@@ -58,8 +58,8 @@ class TrainedModel:
         # تشغيل عملية التنبؤ باستخدام ONNX Runtime
         # تأكد من أن اسم الإدخال مطابق للاسم المُستخدم أثناء التصدير (في هذه الحالة "input")
         outputs = self.session.run(None, {"input": input_np})
-        # من المفترض أن تكون مخرجات النموذج على شكل (1, 30, 1, 1)؛ نقوم بتسويتها إلى (1, 30)
-        outputs = outputs[0].reshape(1, 30)
+        # من المفترض أن تكون مخرجات النموذج على شكل (1, 23)؛ نقوم بتسويتها إلى (1, 23) في حالة الحاجة
+        outputs = outputs[0].reshape(1, 23)
 
         print(f"عملية التنبؤ استغرقت {time.time() - start_inference:.5f} ثانية")
 
@@ -84,7 +84,7 @@ class TrainedModel:
         print(f"إجمالي وقت التنبؤ: {total_time:.5f} ثانية")
 
         return num1_predicted, predicted_operation, num2_predicted
-
+        
 class ExpandingCircle:
     def __init__(self, canvas, x, y, max_radius, color):
         self.canvas = canvas
