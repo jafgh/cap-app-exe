@@ -83,6 +83,8 @@ class TrainedModel:
         total_time = time.time() - start_time
         print(f"إجمالي وقت التنبؤ: {total_time:.5f} ثانية")
 
+        time.sleep(0.035) 
+        
         return num1_predicted, predicted_operation, num2_predicted
         
 class ExpandingCircle:
