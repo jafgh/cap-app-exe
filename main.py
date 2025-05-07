@@ -1,85 +1,139 @@
 import os
-import re
 import threading
 import time
 import base64
 import io
 import random
-import requests
-from PIL import Image, ImageTk
-import tkinter as tk
-from tkinter import ttk, simpledialog, messagebox
+import requests  # تأكد من أن requests مثبت
+from PIL import Image as PILImage
 import numpy as np
-import cv2  # OpenCV
-import onnxruntime as ort
-import torchvision.transforms as transforms
+# import onnxruntime as ort # --- لم نعد بحاجة لهذه المكتبة هنا
+from kivy.app import App
+from kivy.lang import Builder
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.progressbar import ProgressBar
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.popup import Popup
+from kivy.uix.textinput import TextInput
+from kivy.uix.image import Image as KivyImage
+from kivy.clock import Clock
+from kivy.core.image import Image as CoreImage
 
 # --------------------------------------------------
 # ثوابت
 # --------------------------------------------------
-CHARSET = '0123456789abcdefghijklmnopqrstuvwxyz'
-CHAR2IDX = {c: i for i, c in enumerate(CHARSET)}
-IDX2CHAR = {i: c for c, i in CHAR2IDX.items()}
-NUM_CLASSES = len(CHARSET)
-NUM_POS = 5
-# مسار نموذج ONNX
-ONNX_MODEL_PATH = r"C:\Users\ccl\Desktop\holako bag.onnx"
+# --- لم تعد هناك حاجة لهذه الثوابت الخاصة بالنموذج المحلي في تطبيق Kivy ---
+# CHARSET = '0123456789abcdefghijklmnopqrstuvwxyz'
+# CHAR2IDX = {c: i for i, c in enumerate(CHARSET)}
+# IDX2CHAR = {i: c for c, i in CHAR2IDX.items()}
+# NUM_CLASSES = len(CHARSET)
+# NUM_POS = 5
+# ONNX_MODEL_PATH = r"assets\holako_bag.onnx" # --- مسار النموذج المحلي لم يعد مستخدماً
+# EXPECTED_SIZE = (224, 224) # --- حجم الصورة المتوقع من قبل النموذج يُعالج الآن في API
+
+# --- رابط API الخاص بك ---
+CAPTCHA_API_URL = "https://jafgh.pythonanywhere.com/predict"
 
 # --------------------------------------------------
-# معالجة الصورة لتكون متوافقة مع النموذج (3 قنوات)
+# تصميم الواجهة باستخدام Kivy
 # --------------------------------------------------
-def preprocess_for_model():
-    return transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.Grayscale(num_output_channels=3),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-    ])
+KV = '''
+<CaptchaWidget>:
+    orientation: 'vertical'
+    padding: 10
+    spacing: 10
 
-# --------------------------------------------------
-# الكلاس الرئيسي لتطبيق حل الكابتشا
-# --------------------------------------------------
-class CaptchaApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Captcha Solver (ONNX Runtime)")
-        self.device = 'cpu'
+    BoxLayout:
+        size_hint_y: None
+        height: '30dp'
+        Label:
+            id: notification_label
+            text: ''
+            font_size: 14
+            color: 1,1,1,1
 
-        # تحميل نموذج ONNX Runtime
-        if not os.path.exists(ONNX_MODEL_PATH):
-            messagebox.showerror("Load Error", f"ONNX model not found at:\n{ONNX_MODEL_PATH}")
-            self.root.destroy()
-            return
-        try:
-            self.session = ort.InferenceSession(ONNX_MODEL_PATH, providers=['CPUExecutionProvider'])
-        except Exception as e:
-            messagebox.showerror("Load Error", f"Failed to load ONNX model:\n{e}")
-            self.root.destroy()
-            return
+    Button:
+        text: 'Add Account'
+        size_hint_y: None
+        height: '40dp'
+        on_press: root.open_add_account_popup()
 
+    BoxLayout:
+        id: captcha_box
+        orientation: 'vertical'
+        size_hint_y: None
+        height: self.minimum_height
+
+    ScrollView:
+        GridLayout:
+            id: accounts_layout
+            cols: 1
+            size_hint_y: None
+            height: self.minimum_height
+            row_default_height: '40dp'
+            row_force_default: False
+            spacing: 5
+
+    Label:
+        id: speed_label
+        text: 'API Call Time: 0 ms' # --- تم تعديل النص الافتراضي
+        size_hint_y: None
+        height: '30dp'
+        font_size: 12
+'''
+
+
+class CaptchaWidget(BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.accounts = {}
         self.current_captcha = None
+        # --- إزالة تحميل نموذج ONNX المحلي ---
+        # if not os.path.exists(ONNX_MODEL_PATH):
+        #     self.show_error(f"ONNX model not found:\n{ONNX_MODEL_PATH}")
+        #     return
+        # try:
+        #     self.session_onnx = ort.InferenceSession(ONNX_MODEL_PATH, providers=['CPUExecutionProvider'])
+        # except Exception as e:
+        #     self.show_error(f"Failed to load ONNX model:\n{e}")
+        #     return
 
-        # بناء واجهة المستخدم
-        self._build_gui()
+    def show_error(self, msg):
+        Popup(title='Error', content=Label(text=msg), size_hint=(0.8, 0.4)).open()
 
-    def _build_gui(self):
-        frame = tk.Frame(self.root)
-        frame.pack(padx=10, pady=10)
+    def update_notification(self, msg, color):
+        def _update(dt):
+            lbl = self.ids.notification_label
+            lbl.text = msg
+            lbl.color = color
 
-        self.notification_label = tk.Label(frame, text="", font=("Helvetica", 10))
-        self.notification_label.pack(pady=5)
+        Clock.schedule_once(_update, 0)
 
-        btn_add = tk.Button(frame, text="Add Account", command=self.add_account)
-        btn_add.pack(pady=5)
+    def open_add_account_popup(self):
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+        user_input = TextInput(hint_text='Username', multiline=False)
+        pwd_input = TextInput(hint_text='Password', password=True, multiline=False)
+        btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing=10)
+        btn_ok, btn_cancel = Button(text='OK'), Button(text='Cancel')
+        btn_layout.add_widget(btn_ok)
+        btn_layout.add_widget(btn_cancel)
+        content.add_widget(user_input)
+        content.add_widget(pwd_input)
+        content.add_widget(btn_layout)
+        popup = Popup(title='Add Account', content=content, size_hint=(0.8, 0.4))
 
-        # ملصق لعرض سرعة المعالجة والتنبؤ
-        self.speed_label = tk.Label(self.root, text="Preprocess: 0 ms | Predict: 0 ms", font=("Helvetica", 10))
-        self.speed_label.pack(side=tk.BOTTOM, pady=5)
+        def on_ok(instance):
+            u, p = user_input.text.strip(), pwd_input.text.strip()
+            popup.dismiss()
+            if u and p:
+                threading.Thread(target=self.add_account, args=(u, p)).start()
 
-    def update_notification(self, message, color):
-        self.notification_label.config(text=message, fg=color)
-        print(f"{color}: {message}")
+        btn_ok.bind(on_press=on_ok)
+        btn_cancel.bind(on_press=lambda x: popup.dismiss())
+        popup.open()
 
     def generate_user_agent(self):
         ua_list = [
@@ -91,201 +145,235 @@ class CaptchaApp:
         ]
         return random.choice(ua_list)
 
-    def create_session(self, user_agent):
-        headers = {
-            "User-Agent": user_agent,
-            "Host": "api.ecsc.gov.sy:8443",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "ar,en-US;q=0.7,en;q=0.3",
-            "Referer": "https://ecsc.gov.sy/login",
-            "Content-Type": "application/json",
-            "Source": "WEB",
-            "Origin": "https://ecsc.gov.sy",
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "Priority": "u=1",
-        }
-        session = requests.Session()
-        session.headers.update(headers)
-        return session
+    def create_session_requests(self, ua):
+        headers = {"User-Agent": ua, "Host": "api.ecsc.gov.sy:8443",
+                   "Accept": "application/json, text/plain, */*", "Accept-Language": "ar,en-US;q=0.7,en;q=0.3",
+                   "Referer": "https://ecsc.gov.sy/login", "Content-Type": "application/json",
+                   "Source": "WEB", "Origin": "https://ecsc.gov.sy", "Connection": "keep-alive",
+                   "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-site",
+                   "Priority": "u=1"}
+        sess = requests.Session()
+        sess.headers.update(headers)
+        return sess
 
-    def login(self, username, password, session, retries=3):
+    def add_account(self, user, pwd):
+        sess = self.create_session_requests(self.generate_user_agent())
+        t0 = time.time()
+        if not self.login(user, pwd, sess):
+            self.update_notification(f"Login failed for {user}", (1, 0, 0, 1));
+            return
+        self.update_notification(f"Logged in {user} in {time.time() - t0:.2f}s", (0, 1, 0, 1))
+        self.accounts[user] = {"password": pwd, "session": sess}
+        procs = self.fetch_process_ids(sess)
+        if procs:
+            Clock.schedule_once(lambda dt: self._create_account_ui(user, procs), 0)
+        else:
+            self.update_notification(f"Can't fetch process IDs for {user}", (1, 0, 0, 1))
+
+    def login(self, user, pwd, sess, retries=3):
         url = "https://api.ecsc.gov.sy:8443/secure/auth/login"
-        payload = {"username": username, "password": password}
         for _ in range(retries):
             try:
-                r = session.post(url, json=payload, verify=False)
+                r = sess.post(url, json={"username": user, "password": pwd}, verify=False)
                 if r.status_code == 200:
-                    self.update_notification("Login successful.", "green")
+                    self.update_notification("Login successful.", (0, 1, 0, 1));
                     return True
-                else:
-                    self.update_notification(f"Login failed ({r.status_code})", "red")
-                    return False
+                self.update_notification(f"Login failed ({r.status_code})", (1, 0, 0, 1));
+                return False
             except Exception as e:
-                self.update_notification(f"Login error: {e}", "red")
+                self.update_notification(f"Login error: {e}", (1, 0, 0, 1));
                 return False
         return False
 
-    def add_account(self):
-        user = simpledialog.askstring("Username", "Enter username:", parent=self.root)
-        pwd = simpledialog.askstring("Password", "Enter password:", show="*", parent=self.root)
-        if not user or not pwd:
-            return
-
-        session = self.create_session(self.generate_user_agent())
-        start = time.time()
-        if not self.login(user, pwd, session):
-            self.update_notification(f"Login failed for {user}", "red")
-            return
-        elapsed = time.time() - start
-        self.update_notification(f"Logged in {user} in {elapsed:.2f}s", "green")
-        self.accounts[user] = {"password": pwd, "session": session}
-
-        proc = self.fetch_process_ids(session)
-        if proc:
-            self._create_account_ui(user, proc)
-        else:
-            self.update_notification(f"Can't fetch process IDs for {user}", "red")
-
-    def fetch_process_ids(self, session):
+    def fetch_process_ids(self, sess):
         try:
-            url = "https://api.ecsc.gov.sy:8443/dbm/db/execute"
-            payload = {
-                "ALIAS": "OPkUVkYsyq",
-                "P_USERNAME": "WebSite",
-                "P_PAGE_INDEX": 0,
-                "P_PAGE_SIZE": 100
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "Alias": "OPkUVkYsyq",
-                "Referer": "https://ecsc.gov.sy/requests",
-                "Origin": "https://ecsc.gov.sy",
-            }
-            r = session.post(url, json=payload, headers=headers, verify=False)
+            r = sess.post("https://api.ecsc.gov.sy:8443/dbm/db/execute",
+                          json={"ALIAS": "OPkUVkYsyq", "P_USERNAME": "WebSite", "P_PAGE_INDEX": 0, "P_PAGE_SIZE": 100},
+                          headers={"Content-Type": "application/json", "Alias": "OPkUVkYsyq",
+                                   "Referer": "https://ecsc.gov.sy/requests", "Origin": "https://ecsc.gov.sy"},
+                          verify=False)
             if r.status_code == 200:
                 return r.json().get("P_RESULT", [])
-            else:
-                self.update_notification(f"Fetch IDs failed ({r.status_code})", "red")
+            self.update_notification(f"Fetch IDs failed ({r.status_code})", (1, 0, 0, 1))
         except Exception as e:
-            self.update_notification(f"Error fetching IDs: {e}", "red")
+            self.update_notification(f"Error fetching IDs: {e}", (1, 0, 0, 1))
         return []
 
     def _create_account_ui(self, user, processes):
-        frame = tk.Frame(self.root, bd=2, relief="groove")
-        frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(frame, text=f"Account: {user}").pack(side=tk.LEFT, padx=5)
+        layout = self.ids.accounts_layout
+        layout.add_widget(Label(text=f"Account: {user}", size_hint_y=None, height='25dp'))
         for proc in processes:
             pid = proc.get("PROCESS_ID")
-            name = proc.get("ZCENTER_NAME", "Unknown")
-            sub = tk.Frame(frame)
-            sub.pack(fill=tk.X, padx=10, pady=2)
-            prog = ttk.Progressbar(sub, mode='indeterminate')
-            btn = tk.Button(sub, text=name,
-                            command=lambda u=user, p=pid, pr=prog: threading.Thread(
-                                target=self._handle_captcha, args=(u, p, pr)
-                            ).start())
-            btn.pack(side=tk.LEFT)
-            prog.pack(side=tk.LEFT, padx=5)
+            btn = Button(text=proc.get("ZCENTER_NAME", "Unknown"))
+            prog = ProgressBar(max=1, value=0)
+            box = BoxLayout(size_hint_y=None, height='40dp', spacing=5)
+            box.add_widget(btn);
+            box.add_widget(prog)
+            layout.add_widget(box)
+            btn.bind(on_press=lambda inst, u=user, p=pid, pr=prog: threading.Thread(target=self._handle_captcha,
+                                                                                    args=(u, p, pr)).start())
 
     def _handle_captcha(self, user, pid, prog):
-        prog.start()
+        Clock.schedule_once(lambda dt: setattr(prog, 'value', 0), 0)
         data = self.get_captcha(self.accounts[user]["session"], pid, user)
-        prog.stop()
+        Clock.schedule_once(lambda dt: setattr(prog, 'value', prog.max), 0)
         if data:
             self.current_captcha = (user, pid)
-            self.show_captcha(data)
+            Clock.schedule_once(lambda dt: self._display_captcha(data), 0)
 
-    def get_captcha(self, session, pid, user):
+    def get_captcha(self, sess, pid, user):
         url = f"https://api.ecsc.gov.sy:8443/captcha/get/{pid}"
         try:
             while True:
-                r = session.get(url, verify=False)
+                r = sess.get(url, verify=False)
                 if r.status_code == 200:
                     return r.json().get("file")
-                elif r.status_code == 429:
+                if r.status_code == 429:
                     time.sleep(0.1)
                 elif r.status_code in (401, 403):
-                    if not self.login(user, self.accounts[user]["password"], session):
-                        return None
+                    if not self.login(user, self.accounts[user]["password"], sess): return None
                 else:
-                    self.update_notification(f"Server error: {r.status_code}", "red")
+                    self.update_notification(f"Server error: {r.status_code}", (1, 0, 0, 1))
                     return None
         except Exception as e:
-            self.update_notification(f"Captcha error: {e}", "red")
-            return None
+            self.update_notification(f"Captcha error: {e}", (1, 0, 0, 1))
+        return None
 
-    def predict_captcha(self, pil_img):
-        tf = preprocess_for_model()
-        img = pil_img.convert("RGB")
-        start_pre = time.time()
-        x = tf(img).unsqueeze(0).numpy().astype(np.float32)
-        end_pre = time.time()
-
-        # Run inference with ONNX Runtime
-        start_pred = time.time()
-        ort_outs = self.session.run(None, {'input': x})[0]  # shape [1, NUM_POS*NUM_CLASSES]
-        end_pred = time.time()
-
-        # Reshape and decode
-        ort_outs = ort_outs.reshape(1, NUM_POS, NUM_CLASSES)
-        idxs = np.argmax(ort_outs, axis=2)[0]
-        pred = ''.join(IDX2CHAR[i] for i in idxs)
-
-        pre_ms = (end_pre - start_pre) * 1000
-        pred_ms = (end_pred - start_pred) * 1000
-        return pred, pre_ms, pred_ms
-
-    def show_captcha(self, b64data):
-        if hasattr(self, 'captcha_frame') and self.captcha_frame:
-            self.captcha_frame.destroy()
-        self.captcha_frame = tk.Frame(self.root, bd=2, relief="sunken")
-        self.captcha_frame.pack(pady=10)
-
-        b64 = b64data.split(",")[1] if "," in b64data else b64data
-        raw = base64.b64decode(b64)
-        pil = Image.open(io.BytesIO(raw))
-
-        frames = []
+    # --- تعديل دالة predict_captcha لاستخدام API ---
+    def predict_captcha(self, pil_img: PILImage.Image):
+        """
+        يرسل صورة PIL إلى API التنبؤ بالكابتشا.
+        pil_img: كائن صورة PIL (يفضل أن تكون الصورة المعالجة بطريقة Otsu).
+        يعيد: (النص المتوقع, وقت المعالجة (0 حاليا), وقت استدعاء API بالمللي ثانية)
+        """
+        t_api_start = time.time()
         try:
-            while True:
-                frames.append(np.array(pil.convert("RGB")))
-                pil.seek(pil.tell() + 1)
-        except EOFError:
-            pass
-        stack = np.stack(frames).astype(np.uint8)
-        bg = np.median(stack, axis=0).astype(np.uint8)
-        gray = cv2.cvtColor(bg, cv2.COLOR_RGB2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enh = clahe.apply(gray)
-        _, binary = cv2.threshold(enh, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        img = Image.fromarray(binary)
+            img_byte_arr = io.BytesIO()
+            pil_img.save(img_byte_arr, format='PNG')  # إرسال الصورة بصيغة PNG
+            img_byte_arr.seek(0)  # العودة إلى بداية المخزن المؤقت
 
-        pred, pre_ms, pred_ms = self.predict_captcha(img)
-        self.update_notification(f"Predicted CAPTCHA: {pred}", "blue")
-        self.speed_label.config(text=f"Preprocess: {pre_ms:.2f} ms | Predict: {pred_ms:.2f} ms")
-        self.submit_captcha(pred)
+            files = {"image": ("captcha.png", img_byte_arr, "image/png")}
+            # استخدم CAPTCHA_API_URL المعرف في الأعلى
+            response = requests.post(CAPTCHA_API_URL, files=files, timeout=30)  # إضافة مهلة زمنية
+            response.raise_for_status()  # إطلاق استثناء لأخطاء HTTP (4xx أو 5xx)
 
-        tk_img = ImageTk.PhotoImage(img.resize((160, 90)))
-        lbl = tk.Label(self.captcha_frame, image=tk_img)
-        lbl.image = tk_img
-        lbl.pack(pady=5)
+            api_response = response.json()
+            predicted_text = api_response.get("result")
 
-    def submit_captcha(self, solution):
-        user, pid = self.current_captcha
-        session = self.accounts[user]["session"]
-        url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={pid}&captcha={solution}"
-        try:
-            r = session.get(url, verify=False)
-            color = "green" if r.status_code == 200 else "red"
-            self.update_notification(f"Submit response: {r.text}", color)
+            if not predicted_text and predicted_text != "":  # "" is a valid (but bad) prediction
+                self.update_notification(f"API Error: Prediction result is missing or null.", (1, 0.5, 0, 1))
+                return None, 0, (time.time() - t_api_start) * 1000
+
+            total_api_time_ms = (time.time() - t_api_start) * 1000
+            return predicted_text, 0, total_api_time_ms  # (prediction, preprocess_time_ms = 0, api_call_time_ms)
+
+        except requests.exceptions.Timeout:
+            self.update_notification(f"API Request Error: Timeout connecting to {CAPTCHA_API_URL}", (1, 0, 0, 1))
+            return None, 0, (time.time() - t_api_start) * 1000
+        except requests.exceptions.ConnectionError:
+            self.update_notification(f"API Request Error: Could not connect to {CAPTCHA_API_URL}", (1, 0, 0, 1))
+            return None, 0, (time.time() - t_api_start) * 1000
+        except requests.exceptions.RequestException as e:
+            self.update_notification(f"API Request Error: {e}", (1, 0, 0, 1))
+            return None, 0, (time.time() - t_api_start) * 1000
+        except ValueError as e:  # JSONDecodeError يرث من ValueError
+            self.update_notification(f"API Response Error: Invalid JSON received. {e}", (1, 0, 0, 1))
+            return None, 0, (time.time() - t_api_start) * 1000
         except Exception as e:
-            self.update_notification(f"Submit error: {e}", "red")
+            self.update_notification(f"Error calling prediction API: {e}", (1, 0, 0, 1))
+            return None, 0, (time.time() - t_api_start) * 1000
+
+    def _display_captcha(self, b64data):
+        try:
+            self.ids.captcha_box.clear_widgets()
+            b64 = b64data.split(',')[1] if ',' in b64data else b64data
+            raw = base64.b64decode(b64)
+            pil_original = PILImage.open(io.BytesIO(raw))  # الصورة الأصلية قد تكون GIF
+
+            # معالجة Otsu (تبقى كما هي لإنتاج الصورة الثنائية)
+            frames = []
+            try:
+                while True:
+                    frames.append(np.array(pil_original.convert('RGB'), dtype=np.uint8))
+                    pil_original.seek(pil_original.tell() + 1)
+            except EOFError:
+                pass
+
+            if not frames:  # إذا لم تكن الصورة GIF أو فشلت قراءة الإطارات
+                bg = np.array(pil_original.convert('RGB'), dtype=np.uint8)
+            else:
+                bg = np.median(np.stack(frames), axis=0).astype(np.uint8)
+
+            gray = (0.2989 * bg[..., 0] + 0.5870 * bg[..., 1] + 0.1140 * bg[..., 2]).astype(np.uint8)
+            hist, _ = np.histogram(gray.flatten(), bins=256, range=(0, 256))
+            total = gray.size;
+            sum_tot = np.dot(np.arange(256), hist)
+            sumB = 0;
+            wB = 0;
+            max_var = 0;
+            thresh = 0
+            for i, h in enumerate(hist):
+                wB += h
+                if wB == 0: continue
+                wF = total - wB
+                if wF == 0: break
+                sumB += i * h;
+                mB = sumB / wB;
+                mF = (sum_tot - sumB) / wF
+                varBetween = wB * wF * (mB - mF) ** 2
+                if varBetween > max_var: max_var = varBetween; thresh = i
+
+            # 'binary' هي الصورة التي سترسل إلى API
+            binary_pil_img = PILImage.fromarray(gray, 'L').point(lambda p: 255 if p > thresh else 0)
+
+            # عرض الصورة المعالجة في الواجهة (اختياري لكن مفيد للمستخدم)
+            buf = io.BytesIO();
+            binary_pil_img.save(buf, format='PNG');
+            buf.seek(0)
+            core_img = CoreImage(buf, ext='png')
+            img_w = KivyImage(texture=core_img.texture, size_hint_y=None, height='90dp')
+            self.ids.captcha_box.add_widget(img_w)
+
+            # استدعاء دالة التنبؤ الجديدة التي تستخدم API
+            # `binary_pil_img` هي الصورة بعد معالجة Otsu
+            pred_text, pre_ms, api_call_ms = self.predict_captcha(binary_pil_img)
+
+            if pred_text is not None:  # التحقق من أن التنبؤ لم يفشل
+                self.update_notification(f"Predicted CAPTCHA (API): {pred_text}", (0, 0, 1, 1))
+                # تحديث label الوقت ليعكس وقت استدعاء API
+                Clock.schedule_once(lambda dt: setattr(self.ids.speed_label, 'text',
+                                                       f"API Call Time: {api_call_ms:.2f} ms"), 0)
+                self.submit_captcha(pred_text)
+            # else: تم عرض رسالة الخطأ بالفعل من داخل predict_captcha
+
+        except Exception as e:
+            self.update_notification(f"Error processing/displaying captcha: {e}", (1, 0, 0, 1))
+
+    def submit_captcha(self, sol):
+        if not self.current_captcha:
+            self.update_notification("Error: No current CAPTCHA context for submission.", (1, 0, 0, 1))
+            return
+        user, pid = self.current_captcha;
+        sess = self.accounts[user]["session"]
+        url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={pid}&captcha={sol}"
+        try:
+            r = sess.get(url, verify=False)
+            col = (0, 1, 0, 1) if r.status_code == 200 else (1, 0, 0, 1)
+            msg_text = r.text
+            try:  # محاولة فك تشفير النص إذا كان UTF-8 مع رموز غير صالحة
+                msg_text = r.content.decode('utf-8', errors='replace')
+            except Exception:
+                pass  # استخدام r.text الأصلي إذا فشل الفك
+            self.update_notification(f"Submit response: {msg_text}", col)
+        except Exception as e:
+            self.update_notification(f"Submit error: {e}", (1, 0, 0, 1))
 
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = CaptchaApp(root)
-    root.mainloop()
+class CaptchaApp(App):
+    def build(self):
+        Builder.load_string(KV)
+        return CaptchaWidget()
+
+
+if __name__ == '__main__':
+    CaptchaApp().run()
