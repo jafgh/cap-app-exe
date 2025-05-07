@@ -1,10 +1,5 @@
-numpy
-torch
-torchvision
-opencv-python
-pillow
+python3
+kivy
 requests
-pyinstal
-tk
-onnxruntime
-io
+Pillow
+numpy
