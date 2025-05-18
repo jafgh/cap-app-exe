@@ -159,32 +159,74 @@ class CaptchaApp(tk.Tk):
             self.current_captcha = (user, pid)
             self.show_and_process_captcha(data, user, pid)
 
-    def get_captcha(self, sess, pid, user):
+    def get_captcha(self, session, pid, user):
         url = f"https://api.ecsc.gov.sy:8443/captcha/get/{pid}"
         try:
-            while True:
-                r = sess.get(url, verify=False)
-                # حاول فكّ المحتوى كـ JSON أولاً، وإلا استخدم النص الخام
-                try:
-                    payload = r.json()
-                except ValueError:
-                    payload = {"message": r.text}
-                # عَرِض الرسالة كاملة من الخادم
-                msg = payload.get("message") or payload.get("file")[:50] + "…"
-                color = "green" if r.status_code == 200 else "orange" if r.status_code == 429 else "red"
-                # استخدم after لضمان تحديث الواجهة في الخيط الرئيسي
-                self.after(0, lambda m=msg, c=color: self.update_notification(f"[{user}] get_captcha: {m}", c))
-                
-                if r.status_code == 200:
-                    return payload.get("file")
-                elif r.status_code == 429:
-                    time.sleep(0.1)
-                    continue
+            # إشعار بداية المحاولة
+            self.update_notification(f"[{user}] محاولة جلب الكابتشا لـ PID {pid} (محاولة وحيدة).", "grey")
+            
+            r = session.get(url, timeout=(15, 30), verify=False)
+            text_preview = r.text.replace("\n", " ")[:200]
+            
+            if r.status_code == 200:
+                captcha_info = r.json()
+                if captcha_info.get("file"):
+                    self.update_notification(f"[{user}] تم جلب الكابتشا بنجاح لـ PID {pid}.", "green")
+                    return captcha_info["file"]
                 else:
+                    self.update_notification(
+                        f"[{user}] استجابة الكابتشا (PID: {pid}) لا تحتوي على ملف. النص: {text_preview}",
+                        "orange"
+                    )
                     return None
+
+            elif r.status_code in (401, 403):
+                self.update_notification(
+                    f"[{user}] خطأ صلاحية ({r.status_code}) عند طلب كابتشا لـ PID {pid}. النص: {text_preview}."
+                    " سيتم محاولة إعادة تسجيل الدخول مرة واحدة.",
+                    "orange"
+                )
+                # محاولة إعادة تسجيل الدخول
+                pwd = self.accounts[user].get("password")
+                if pwd and self.login(user, pwd, session):
+                    self.update_notification(
+                        f"[{user}] تم إعادة تسجيل الدخول بنجاح بعد خطأ الصلاحية. لن يتم إعادة محاولة جلب الكابتشا تلقائياً هنا.",
+                        "blue"
+                    )
+                else:
+                    self.update_notification(
+                        f"[{user}] فشلت محاولة إعادة تسجيل الدخول بعد خطأ الصلاحية.",
+                        "red"
+                    )
+                return None
+
+            else:
+                self.update_notification(
+                    f"[{user}] خطأ سيرفر ({r.status_code}) عند طلب كابتشا لـ PID {pid}. النص: {text_preview}",
+                    "red"
+                )
+                return None
+
+        except requests.exceptions.RequestException as e:
+            err_name = type(e).__name__
+            self.update_notification(
+                f"[{user}] خطأ شبكة ({err_name}) عند طلب كابتشا لـ PID {pid}.",
+                "red"
+            )
+            # تفصيل خطأ البروكسي
+            if isinstance(e, requests.exceptions.ProxyError):
+                self.update_notification(
+                    f"[{user}] خطأ بروكسي ({err_name}) عند طلب كابتشا لـ PID {pid}.",
+                    "red"
+                )
+            return None
+
         except Exception as e:
-            self.after(0, lambda: self.update_notification(f"[{user}] خطأ في get_captcha: {e}", "red"))
-        return None
+            self.update_notification(
+                f"[{user}] خطأ غير متوقع عند طلب كابتشا لـ PID {pid}: {e}",
+                "red"
+            )
+            return None
         
     def predict_captcha(self, pil_img: PILImage.Image):
         t_api_start = time.time()
@@ -291,23 +333,47 @@ class CaptchaApp(tk.Tk):
         sess = self.accounts[user]["session"]
         url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={pid}&captcha={sol}"
         try:
-            r = sess.get(url, verify=False)
-            # فكّ المحتوى JSON أو كنصي
+            self.update_notification(f"[{user}] إرسال الحل للكابتشا لـ PID {pid}…", "grey")
+            r = sess.get(url, timeout=(15, 30), verify=False)
+            text_preview = r.text.replace("\n", " ")[:200]
+
+            # حاول فكّ JSON لأجل رسالة منسقة
             try:
                 payload = r.json()
-                server_msg = payload.get("message") or str(payload)
+                server_msg = payload.get("message", text_preview)
             except ValueError:
-                server_msg = r.text
-            success = (r.status_code == 200)
-            color = "green" if success else "red"
-            # عَرِض الرسالة كاملة في الإطار المخصّص
-            self.after(0, lambda: self.show_submission_result_in_frame(
-                frame, user, pid, r.status_code, server_msg, success
-            ))
+                server_msg = text_preview
+
+            if r.status_code == 200:
+                self.update_notification(
+                    f"[{user}] نجح إرسال الحل لـ PID {pid}. الرد: {server_msg}",
+                    "green"
+                )
+                success = True
+            else:
+                self.update_notification(
+                    f"[{user}] فشل إرسال الحل لـ PID {pid} (Status {r.status_code}). الرد: {server_msg}",
+                    "red"
+                )
+                success = False
+
+            # عرض ضمن الإطار المخصّص للنتيجة
+            self.show_submission_result_in_frame(frame, user, pid, r.status_code, server_msg, success)
+
+        except requests.exceptions.RequestException as e:
+            err_name = type(e).__name__
+            self.update_notification(
+                f"[{user}] خطأ شبكة ({err_name}) عند إرسال الحل لـ PID {pid}.",
+                "red"
+            )
+            self.show_submission_result_in_frame(frame, user, pid, -1, str(e), False)
+
         except Exception as e:
-            self.after(0, lambda: self.show_submission_result_in_frame(
-                frame, user, pid, -1, str(e), False
-            ))
+            self.update_notification(
+                f"[{user}] خطأ غير متوقع عند إرسال الحل لـ PID {pid}: {e}",
+                "red"
+            )
+            self.show_submission_result_in_frame(frame, user, pid, -1, str(e), False)
 
     def clear_specific_frame(self, frame):
         for w in frame.winfo_children():
