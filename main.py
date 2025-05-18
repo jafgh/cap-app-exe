@@ -164,16 +164,28 @@ class CaptchaApp(tk.Tk):
         try:
             while True:
                 r = sess.get(url, verify=False)
+                # حاول فكّ المحتوى كـ JSON أولاً، وإلا استخدم النص الخام
+                try:
+                    payload = r.json()
+                except ValueError:
+                    payload = {"message": r.text}
+                # عَرِض الرسالة كاملة من الخادم
+                msg = payload.get("message") or payload.get("file")[:50] + "…"
+                color = "green" if r.status_code == 200 else "orange" if r.status_code == 429 else "red"
+                # استخدم after لضمان تحديث الواجهة في الخيط الرئيسي
+                self.after(0, lambda m=msg, c=color: self.update_notification(f"[{user}] get_captcha: {m}", c))
+                
                 if r.status_code == 200:
-                    return r.json().get("file")
-                if r.status_code == 429:
+                    return payload.get("file")
+                elif r.status_code == 429:
                     time.sleep(0.1)
+                    continue
                 else:
                     return None
         except Exception as e:
-            self.update_notification(f"Captcha error: {e}", "red")
+            self.after(0, lambda: self.update_notification(f"[{user}] خطأ في get_captcha: {e}", "red"))
         return None
-
+        
     def predict_captcha(self, pil_img: PILImage.Image):
         t_api_start = time.time()
         try:
@@ -280,19 +292,22 @@ class CaptchaApp(tk.Tk):
         url = f"https://api.ecsc.gov.sy:8443/rs/reserve?id={pid}&captcha={sol}"
         try:
             r = sess.get(url, verify=False)
+            # فكّ المحتوى JSON أو كنصي
+            try:
+                payload = r.json()
+                server_msg = payload.get("message") or str(payload)
+            except ValueError:
+                server_msg = r.text
             success = (r.status_code == 200)
-            msg = r.content.decode('utf-8', errors='replace')
-            col = "green" if success else "red"
-            self.show_submission_result_in_frame(frame, user, pid, r.status_code, msg, success)
+            color = "green" if success else "red"
+            # عَرِض الرسالة كاملة في الإطار المخصّص
+            self.after(0, lambda: self.show_submission_result_in_frame(
+                frame, user, pid, r.status_code, server_msg, success
+            ))
         except Exception as e:
-            self.show_submission_result_in_frame(frame, user, pid, -1, str(e), False)
-
-    def show_submission_result_in_frame(self, frame, user, pid, code, msg, success):
-        tk.Label(
-            frame,
-            text=f"[{user}] PID:{pid} | Status:{code} | {msg}",
-            fg="green" if success else "red"
-        ).pack(pady=5)
+            self.after(0, lambda: self.show_submission_result_in_frame(
+                frame, user, pid, -1, str(e), False
+            ))
 
     def clear_specific_frame(self, frame):
         for w in frame.winfo_children():
